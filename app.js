@@ -40,6 +40,8 @@ const elements = {
   fitPageBtn: document.getElementById("fitPageBtn"),
   rotateLeftBtn: document.getElementById("rotateLeftBtn"),
   rotateRightBtn: document.getElementById("rotateRightBtn"),
+  undoBtn: document.getElementById("undoBtn"),
+  redoBtn: document.getElementById("redoBtn"),
   zoomLabel: document.getElementById("zoomLabel"),
   modeSelect: document.getElementById("modeSelect"),
   deletePointBtn: document.getElementById("deletePointBtn"),
@@ -53,6 +55,8 @@ const elements = {
   confirmRouteBtn: document.getElementById("confirmRouteBtn"),
   calibrationModeBtn: document.getElementById("calibrationModeBtn"),
   resetCalibrationBtn: document.getElementById("resetCalibrationBtn"),
+  deleteLastPointBtn: document.getElementById("deleteLastPointBtn"),
+  deleteSelectedPointPanelBtn: document.getElementById("deleteSelectedPointPanelBtn"),
   resetRouteBtn: document.getElementById("resetRouteBtn"),
   exportCsvBtn: document.getElementById("exportCsvBtn"),
   calibrationStatus: document.getElementById("calibrationStatus"),
@@ -86,6 +90,8 @@ const state = {
   activeRouteId: "",
   selectedPointId: "",
   panelCollapsed: false,
+  undoStack: [],
+  redoStack: [],
 };
 
 const pdfRuntime = {
@@ -101,6 +107,8 @@ const pdfRuntime = {
 
 let draggingPointId = "";
 let pointerMoved = false;
+let dragUndoCaptured = false;
+const inputUndoCaptured = new WeakSet();
 
 function uid(prefix) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -122,6 +130,70 @@ function getPositiveNumber(value, fallback) {
 function getNonNegativeNumber(value, fallback) {
   const number = Number(value);
   return Number.isFinite(number) && number >= 0 ? number : fallback;
+}
+
+function createHistorySnapshot() {
+  return structuredClone({
+    currentPage: state.currentPage,
+    zoom: state.zoom,
+    viewMode: state.viewMode,
+    rotation: state.rotation,
+    mode: state.mode,
+    calibration: state.calibration,
+    pendingCalibrationPoint: state.pendingCalibrationPoint,
+    routes: state.routes,
+    activeRouteId: state.activeRouteId,
+    selectedPointId: state.selectedPointId,
+    panelCollapsed: state.panelCollapsed,
+  });
+}
+
+function restoreHistorySnapshot(snapshot) {
+  state.currentPage = snapshot.currentPage;
+  state.zoom = snapshot.zoom;
+  state.viewMode = snapshot.viewMode;
+  state.rotation = normalizeRotation(snapshot.rotation || 0);
+  state.mode = snapshot.mode;
+  state.calibration = snapshot.calibration;
+  state.pendingCalibrationPoint = snapshot.pendingCalibrationPoint;
+  state.routes = Array.isArray(snapshot.routes) ? snapshot.routes.map(normalizeRoute) : [];
+  state.activeRouteId = snapshot.activeRouteId;
+  state.selectedPointId = snapshot.selectedPointId;
+  state.panelCollapsed = Boolean(snapshot.panelCollapsed);
+  syncInputsFromRoute(getActiveRoute());
+  updateBaseViewport();
+  updateCalibrationScale();
+  recalculateAllRoutes();
+  render();
+  saveState();
+}
+
+function pushUndo() {
+  state.undoStack.push(createHistorySnapshot());
+  if (state.undoStack.length > 100) {
+    state.undoStack.shift();
+  }
+  state.redoStack = [];
+}
+
+function undo() {
+  const snapshot = state.undoStack.pop();
+  if (!snapshot) return;
+  state.redoStack.push(createHistorySnapshot());
+  restoreHistorySnapshot(snapshot);
+}
+
+function redo() {
+  const snapshot = state.redoStack.pop();
+  if (!snapshot) return;
+  state.undoStack.push(createHistorySnapshot());
+  restoreHistorySnapshot(snapshot);
+}
+
+function isTextEditingTarget(target) {
+  if (!(target instanceof HTMLElement)) return false;
+  const tagName = target.tagName.toLowerCase();
+  return tagName === "input" || tagName === "textarea" || tagName === "select" || target.isContentEditable;
 }
 
 async function loadPdfFile(file) {
@@ -165,6 +237,7 @@ function updateBaseViewport() {
 }
 
 function createRoute() {
+  pushUndo();
   const route = {
     id: uid("route"),
     name: elements.routeNameInput.value.trim() || `配線ルート${state.routes.length + 1}`,
@@ -373,8 +446,24 @@ function pointerToPagePoint(clientX, clientY) {
 function addRoutePoint(clientX, clientY) {
   let route = getActiveRoute();
   if (!route) {
-    createRoute();
-    route = getActiveRoute();
+    pushUndo();
+    route = {
+      id: uid("route"),
+      name: elements.routeNameInput.value.trim() || `配線ルート${state.routes.length + 1}`,
+      points: [],
+      segments: [],
+      extraLengthMm: getNonNegativeNumber(elements.extraLengthInput.value, 300),
+      roundingUnitMm: getPositiveNumber(elements.roundingUnitInput.value, 100),
+      totalSegmentLengthMm: 0,
+      totalLengthMm: 0,
+      recommendedCutLengthMm: 0,
+      confirmed: false,
+      createdAt: new Date().toISOString(),
+    };
+    state.routes.push(route);
+    state.activeRouteId = route.id;
+  } else {
+    pushUndo();
   }
 
   const point = pointerToPagePoint(clientX, clientY);
@@ -410,8 +499,23 @@ function movePoint(pointId, clientX, clientY) {
 function deletePoint(pointId) {
   const route = getActiveRoute();
   if (!route) return;
+  pushUndo();
   route.points = route.points.filter((point) => point.id !== pointId);
   if (state.selectedPointId === pointId) {
+    state.selectedPointId = "";
+  }
+  route.confirmed = false;
+  recalculateRoute(route);
+  render();
+  saveState();
+}
+
+function deleteLastPoint() {
+  const route = getActiveRoute();
+  if (!route || route.points.length === 0) return;
+  pushUndo();
+  const removed = route.points.pop();
+  if (removed?.id === state.selectedPointId) {
     state.selectedPointId = "";
   }
   route.confirmed = false;
@@ -442,6 +546,7 @@ function handleCalibrationClick(clientX, clientY) {
     return;
   }
 
+  pushUndo();
   state.calibration = {
     id: uid("calibration"),
     page: clickedPoint.page,
@@ -461,6 +566,8 @@ function handleCalibrationClick(clientX, clientY) {
 }
 
 function resetCalibration() {
+  if (!state.calibration && !state.pendingCalibrationPoint) return;
+  pushUndo();
   state.calibration = null;
   state.pendingCalibrationPoint = null;
   recalculateAllRoutes();
@@ -546,7 +653,13 @@ function renderOverlay() {
     renderRoutePoints(route, color);
   });
 
-  elements.deletePointBtn.disabled = !state.selectedPointId;
+  const route = getActiveRoute();
+  const hasSelectedPoint = Boolean(state.selectedPointId);
+  elements.deletePointBtn.disabled = !hasSelectedPoint;
+  elements.deleteSelectedPointPanelBtn.disabled = !hasSelectedPoint;
+  elements.deleteLastPointBtn.disabled = !route || route.points.length === 0;
+  elements.undoBtn.disabled = state.undoStack.length === 0;
+  elements.redoBtn.disabled = state.redoStack.length === 0;
 }
 
 function renderCalibration() {
@@ -937,6 +1050,8 @@ elements.fitWidthBtn.addEventListener("click", () => fitWidth());
 elements.fitPageBtn.addEventListener("click", () => fitPage());
 elements.rotateLeftBtn.addEventListener("click", () => rotatePage(-90));
 elements.rotateRightBtn.addEventListener("click", () => rotatePage(90));
+elements.undoBtn.addEventListener("click", undo);
+elements.redoBtn.addEventListener("click", redo);
 
 elements.modeSelect.addEventListener("change", () => {
   setMode(elements.modeSelect.value);
@@ -978,6 +1093,8 @@ elements.confirmRouteBtn.addEventListener("click", () => {
 elements.resetRouteBtn.addEventListener("click", () => {
   const route = getActiveRoute();
   if (!route) return;
+  if (!confirm("現在のルートをすべて削除します。よろしいですか？")) return;
+  pushUndo();
   route.points = [];
   route.segments = [];
   route.confirmed = false;
@@ -993,8 +1110,22 @@ elements.deletePointBtn.addEventListener("click", () => {
   if (state.selectedPointId) deletePoint(state.selectedPointId);
 });
 
+elements.deleteSelectedPointPanelBtn.addEventListener("click", () => {
+  if (state.selectedPointId) deletePoint(state.selectedPointId);
+});
+
+elements.deleteLastPointBtn.addEventListener("click", deleteLastPoint);
+
 [elements.routeNameInput, elements.extraLengthInput, elements.roundingUnitInput].forEach((input) => {
+  input.addEventListener("focusout", () => {
+    inputUndoCaptured.delete(input);
+  });
+
   input.addEventListener("input", () => {
+    if (!inputUndoCaptured.has(input)) {
+      pushUndo();
+      inputUndoCaptured.add(input);
+    }
     const route = getActiveRoute();
     syncRouteFromInputs(route);
     render();
@@ -1010,6 +1141,11 @@ elements.segmentTableBody.addEventListener("input", (event) => {
   const segment = route.segments.find((item) => item.id === input.dataset.segmentId);
   if (!segment) return;
 
+  if (!inputUndoCaptured.has(input)) {
+    pushUndo();
+    inputUndoCaptured.add(input);
+  }
+
   const value = getNonNegativeNumber(input.value, 0);
   segment.manualLengthMm = value;
   segment.selectedLengthMm = value;
@@ -1020,7 +1156,12 @@ elements.segmentTableBody.addEventListener("input", (event) => {
   renderRoutes();
 });
 
-elements.segmentTableBody.addEventListener("change", renderSegments);
+elements.segmentTableBody.addEventListener("change", (event) => {
+  if (event.target instanceof HTMLInputElement) {
+    inputUndoCaptured.delete(event.target);
+  }
+  renderSegments();
+});
 
 elements.routeTableBody.addEventListener("click", (event) => {
   const row = event.target.closest("tr[data-route-id]");
@@ -1061,6 +1202,7 @@ elements.overlay.addEventListener("pointerdown", (event) => {
   state.selectedPointId = pointId;
   draggingPointId = pointId;
   pointerMoved = false;
+  dragUndoCaptured = false;
   syncInputsFromRoute(getActiveRoute());
   elements.overlay.setPointerCapture(event.pointerId);
   render();
@@ -1068,6 +1210,10 @@ elements.overlay.addEventListener("pointerdown", (event) => {
 
 elements.overlay.addEventListener("pointermove", (event) => {
   if (!draggingPointId) return;
+  if (!dragUndoCaptured) {
+    pushUndo();
+    dragUndoCaptured = true;
+  }
   pointerMoved = true;
   movePoint(draggingPointId, event.clientX, event.clientY);
 });
@@ -1076,6 +1222,7 @@ elements.overlay.addEventListener("pointerup", (event) => {
   if (draggingPointId) {
     saveState();
     draggingPointId = "";
+    dragUndoCaptured = false;
     try {
       elements.overlay.releasePointerCapture(event.pointerId);
     } catch {
@@ -1107,6 +1254,32 @@ elements.overlay.addEventListener("contextmenu", (event) => {
   if (!pointId) return;
   event.preventDefault();
   deletePoint(pointId);
+});
+
+document.addEventListener("keydown", (event) => {
+  if (isTextEditingTarget(event.target)) return;
+
+  const key = event.key.toLowerCase();
+  if (event.ctrlKey && !event.altKey && key === "z") {
+    event.preventDefault();
+    if (event.shiftKey) {
+      redo();
+    } else {
+      undo();
+    }
+    return;
+  }
+
+  if (event.ctrlKey && !event.altKey && key === "y") {
+    event.preventDefault();
+    redo();
+    return;
+  }
+
+  if (event.key === "Delete" && state.selectedPointId) {
+    event.preventDefault();
+    deletePoint(state.selectedPointId);
+  }
 });
 
 window.addEventListener("resize", () => {
