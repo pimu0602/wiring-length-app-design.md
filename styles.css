@@ -1,0 +1,409 @@
+:root {
+  --bg: #f5f7f8;
+  --surface: #ffffff;
+  --surface-strong: #eef3f4;
+  --text: #172126;
+  --muted: #65747c;
+  --line: #d7dee2;
+  --blue: #1d5f8f;
+  --green: #13795b;
+  --amber: #a15c08;
+  --danger: #a9332f;
+  --shadow: 0 12px 30px rgba(25, 39, 52, 0.08);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Yu Gothic", "Meiryo", system-ui, sans-serif;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button,
+.file-button {
+  min-height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  padding: 7px 12px;
+}
+
+button:hover,
+.file-button:hover {
+  border-color: var(--blue);
+}
+
+button:disabled {
+  cursor: not-allowed;
+  color: #9aa6ad;
+  background: #f0f2f3;
+}
+
+input {
+  width: 100%;
+  min-height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--text);
+  padding: 7px 9px;
+}
+
+h1,
+h2,
+p {
+  margin: 0;
+}
+
+h1 {
+  font-size: 22px;
+  line-height: 1.25;
+}
+
+h2 {
+  font-size: 15px;
+  line-height: 1.35;
+}
+
+.app-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  align-items: center;
+  padding: 16px 20px;
+  background: #12313f;
+  color: #fff;
+}
+
+.app-header p {
+  margin-top: 6px;
+  color: #d9e8ed;
+  font-size: 13px;
+}
+
+.header-status {
+  flex: 0 0 auto;
+  color: #d9e8ed;
+  font-size: 13px;
+}
+
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 14px;
+  padding: 14px;
+}
+
+.drawing-pane,
+.control-pane,
+.bottom-pane > div {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+}
+
+.drawing-pane {
+  min-height: 620px;
+  display: flex;
+  flex-direction: column;
+}
+
+.drawing-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding: 10px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-strong);
+}
+
+.file-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--blue);
+  border-color: var(--blue);
+  color: #fff;
+}
+
+.file-button input {
+  display: none;
+}
+
+.inline-field {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.inline-field input {
+  width: 76px;
+}
+
+#zoomLabel {
+  min-width: 48px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.pdf-stage {
+  position: relative;
+  flex: 1;
+  overflow: hidden;
+  min-height: 560px;
+  background:
+    linear-gradient(45deg, #dce3e7 25%, transparent 25%),
+    linear-gradient(-45deg, #dce3e7 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #dce3e7 75%),
+    linear-gradient(-45deg, transparent 75%, #dce3e7 75%);
+  background-size: 24px 24px;
+  background-position: 0 0, 0 12px, 12px -12px, -12px 0;
+}
+
+#pdfFrame {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #fff;
+}
+
+.route-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  cursor: crosshair;
+  z-index: 2;
+}
+
+.empty-state {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  gap: 8px;
+  text-align: center;
+  color: var(--muted);
+  background: rgba(245, 247, 248, 0.9);
+  z-index: 3;
+}
+
+.empty-state strong {
+  color: var(--text);
+  font-size: 18px;
+}
+
+.control-pane {
+  padding: 14px;
+}
+
+.control-group {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.control-group label {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.button-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+
+#newRouteBtn,
+#confirmRouteBtn {
+  background: var(--green);
+  border-color: var(--green);
+  color: #fff;
+}
+
+#exportCsvBtn {
+  background: var(--blue);
+  border-color: var(--blue);
+  color: #fff;
+}
+
+#resetRouteBtn {
+  color: var(--danger);
+}
+
+.route-meta,
+.result-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.route-meta div,
+.result-list div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 7px;
+}
+
+dt {
+  color: var(--muted);
+}
+
+dd {
+  margin: 0;
+  font-weight: 700;
+}
+
+.bottom-pane {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) 280px minmax(0, 1fr);
+  gap: 14px;
+  padding: 0 14px 14px;
+}
+
+.bottom-pane > div {
+  min-height: 220px;
+  padding: 12px;
+}
+
+.table-wrap {
+  margin-top: 10px;
+  overflow: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+th,
+td {
+  border-bottom: 1px solid var(--line);
+  padding: 8px 7px;
+  text-align: left;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+th {
+  color: var(--muted);
+  font-weight: 700;
+  background: #f7fafb;
+}
+
+td input {
+  width: 110px;
+  min-height: 32px;
+}
+
+.empty-row {
+  color: var(--muted);
+  text-align: center;
+}
+
+.route-row {
+  cursor: pointer;
+}
+
+.route-row:hover {
+  background: #f0f6f8;
+}
+
+.route-row.active {
+  background: #e5f2ee;
+}
+
+.overlay-line {
+  fill: none;
+  stroke-width: 4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  paint-order: stroke;
+  stroke: var(--green);
+}
+
+.overlay-point {
+  stroke: #fff;
+  stroke-width: 3;
+  cursor: grab;
+}
+
+.overlay-point.selected {
+  stroke: var(--amber);
+  stroke-width: 5;
+}
+
+.overlay-label {
+  font-size: 13px;
+  font-weight: 700;
+  fill: #102027;
+  paint-order: stroke;
+  stroke: #fff;
+  stroke-width: 4px;
+  user-select: none;
+  pointer-events: none;
+}
+
+@media (max-width: 1040px) {
+  .workspace,
+  .bottom-pane {
+    grid-template-columns: 1fr;
+  }
+
+  .drawing-pane {
+    min-height: 560px;
+  }
+}
+
+@media (max-width: 640px) {
+  .app-header {
+    display: block;
+  }
+
+  .header-status {
+    margin-top: 10px;
+  }
+
+  .workspace,
+  .bottom-pane {
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+
+  .drawing-toolbar {
+    align-items: stretch;
+  }
+
+  .drawing-toolbar button,
+  .file-button {
+    flex: 1 1 120px;
+  }
+
+  .button-grid {
+    grid-template-columns: 1fr;
+  }
+}
