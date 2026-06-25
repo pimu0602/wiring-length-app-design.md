@@ -53,6 +53,10 @@ const elements = {
   roundingUnitInput: document.getElementById("roundingUnitInput"),
   newRouteBtn: document.getElementById("newRouteBtn"),
   confirmRouteBtn: document.getElementById("confirmRouteBtn"),
+  newWorkBtn: document.getElementById("newWorkBtn"),
+  saveWorkBtn: document.getElementById("saveWorkBtn"),
+  loadWorkBtn: document.getElementById("loadWorkBtn"),
+  deleteSavedWorkBtn: document.getElementById("deleteSavedWorkBtn"),
   calibrationModeBtn: document.getElementById("calibrationModeBtn"),
   resetCalibrationBtn: document.getElementById("resetCalibrationBtn"),
   deleteLastPointBtn: document.getElementById("deleteLastPointBtn"),
@@ -160,12 +164,12 @@ function restoreHistorySnapshot(snapshot) {
   state.activeRouteId = snapshot.activeRouteId;
   state.selectedPointId = snapshot.selectedPointId;
   state.panelCollapsed = Boolean(snapshot.panelCollapsed);
-  syncInputsFromRoute(getActiveRoute());
+  syncInputsFromCurrentRoute();
   updateBaseViewport();
   updateCalibrationScale();
   recalculateAllRoutes();
   render();
-  saveState();
+  markUnsaved();
 }
 
 function pushUndo() {
@@ -213,7 +217,7 @@ async function loadPdfFile(file) {
   await loadPdfPage(1);
   fitWidth(false);
   render();
-  saveState();
+  markUnsaved();
 }
 
 async function loadPdfPage(pageNumber) {
@@ -258,7 +262,7 @@ function createRoute() {
   state.mode = MODES.ROUTE;
   syncInputsFromRoute(route);
   render();
-  saveState();
+  markUnsaved();
 }
 
 function syncRouteFromInputs(route) {
@@ -274,6 +278,17 @@ function syncInputsFromRoute(route) {
   elements.routeNameInput.value = route.name || "";
   elements.extraLengthInput.value = route.extraLengthMm ?? 300;
   elements.roundingUnitInput.value = route.roundingUnitMm ?? 100;
+}
+
+function syncInputsFromCurrentRoute() {
+  const route = getActiveRoute();
+  if (route) {
+    syncInputsFromRoute(route);
+    return;
+  }
+  elements.routeNameInput.value = "";
+  elements.extraLengthInput.value = 300;
+  elements.roundingUnitInput.value = 100;
 }
 
 function render() {
@@ -384,7 +399,7 @@ function setMode(mode) {
     state.pendingCalibrationPoint = null;
   }
   render();
-  saveState();
+  markUnsaved();
 }
 
 function setZoom(nextZoom, anchorEvent, viewMode = VIEW_MODES.CUSTOM) {
@@ -406,14 +421,14 @@ function setZoom(nextZoom, anchorEvent, viewMode = VIEW_MODES.CUSTOM) {
   const newSize = getPageSize();
   stage.scrollLeft += (newSize.width - oldSize.width) * anchorXRatio;
   stage.scrollTop += (newSize.height - oldSize.height) * anchorYRatio;
-  saveState();
+  markUnsaved();
 }
 
 function fitWidth(shouldSave = true) {
   updateBaseViewport();
   const availableWidth = Math.max(320, elements.pdfStage.clientWidth - 48);
   setZoom((availableWidth / pdfRuntime.baseViewport.width) * 100, null, VIEW_MODES.FIT_WIDTH);
-  if (shouldSave) saveState();
+  if (shouldSave) markUnsaved();
 }
 
 function fitPage(shouldSave = true) {
@@ -423,7 +438,7 @@ function fitPage(shouldSave = true) {
   const scaleX = availableWidth / pdfRuntime.baseViewport.width;
   const scaleY = availableHeight / pdfRuntime.baseViewport.height;
   setZoom(Math.min(scaleX, scaleY) * 100, null, VIEW_MODES.FIT_PAGE);
-  if (shouldSave) saveState();
+  if (shouldSave) markUnsaved();
 }
 
 function getPageSize() {
@@ -477,7 +492,7 @@ function addRoutePoint(clientX, clientY) {
   route.confirmed = false;
   recalculateRoute(route);
   render();
-  saveState();
+  markUnsaved();
 }
 
 function movePoint(pointId, clientX, clientY) {
@@ -507,7 +522,7 @@ function deletePoint(pointId) {
   route.confirmed = false;
   recalculateRoute(route);
   render();
-  saveState();
+  markUnsaved();
 }
 
 function deleteLastPoint() {
@@ -521,7 +536,7 @@ function deleteLastPoint() {
   route.confirmed = false;
   recalculateRoute(route);
   render();
-  saveState();
+  markUnsaved();
 }
 
 function handleCalibrationClick(clientX, clientY) {
@@ -562,7 +577,7 @@ function handleCalibrationClick(clientX, clientY) {
   state.mode = MODES.ROUTE;
   updateCalibrationScale();
   render();
-  saveState();
+  markUnsaved();
 }
 
 function resetCalibration() {
@@ -572,7 +587,7 @@ function resetCalibration() {
   state.pendingCalibrationPoint = null;
   recalculateAllRoutes();
   render();
-  saveState();
+  markUnsaved();
 }
 
 function updateCalibrationScale() {
@@ -803,7 +818,7 @@ function renderResults() {
 }
 
 function renderRoutes() {
-  const validRoutes = state.routes.filter((route) => route.points.length >= 2);
+  const validRoutes = dedupeRoutesById(state.routes).filter((route) => route.confirmed && route.points.length >= 2);
   if (validRoutes.length === 0) {
     elements.routeTableBody.innerHTML = `<tr><td colspan="4" class="empty-row">保存済みルートはありません</td></tr>`;
     return;
@@ -863,8 +878,8 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
-function saveState() {
-  const data = {
+function createPersistedState() {
+  return {
     pdfName: state.pdfName,
     currentPage: state.currentPage,
     pageCount: state.pageCount,
@@ -873,20 +888,41 @@ function saveState() {
     rotation: state.rotation,
     mode: state.mode,
     calibration: state.calibration,
-    routes: state.routes,
+    routes: dedupeRoutesById(state.routes),
     activeRouteId: state.activeRouteId,
     panelCollapsed: state.panelCollapsed,
   };
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-  elements.storageStatus.textContent = "ローカル保存: 保存済み";
 }
 
-function loadState() {
-  const raw = localStorage.getItem(STORAGE_KEY) || LEGACY_STORAGE_KEYS.map((key) => localStorage.getItem(key)).find(Boolean);
-  if (!raw) return;
+function saveWork() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(createPersistedState()));
+  elements.storageStatus.textContent = "作業保存: 保存済み";
+}
+
+function markUnsaved() {
+  elements.storageStatus.textContent = hasSavedWork()
+    ? "未保存の変更あり / 保存済みデータあり"
+    : "未保存の変更あり";
+}
+
+function hasSavedWork() {
+  return Boolean(localStorage.getItem(STORAGE_KEY) || LEGACY_STORAGE_KEYS.some((key) => localStorage.getItem(key)));
+}
+
+function getSavedWorkRaw() {
+  return localStorage.getItem(STORAGE_KEY) || LEGACY_STORAGE_KEYS.map((key) => localStorage.getItem(key)).find(Boolean);
+}
+
+function loadWork() {
+  const raw = getSavedWorkRaw();
+  if (!raw) {
+    alert("保存された作業データはありません。");
+    return;
+  }
 
   try {
     const data = JSON.parse(raw);
+    resetWorkState({ keepPanelState: false });
     state.pdfName = data.pdfName || "";
     state.currentPage = data.currentPage || 1;
     state.pageCount = data.pageCount || 0;
@@ -895,17 +931,96 @@ function loadState() {
     state.rotation = normalizeRotation(data.rotation || 0);
     state.mode = Object.values(MODES).includes(data.mode) ? data.mode : MODES.ROUTE;
     state.calibration = normalizeCalibration(data.calibration);
-    state.routes = Array.isArray(data.routes) ? data.routes.map(normalizeRoute) : [];
-    state.activeRouteId = data.activeRouteId || state.routes[0]?.id || "";
+    state.routes = dedupeRoutesById(Array.isArray(data.routes) ? data.routes.map(normalizeRoute) : []);
+    state.activeRouteId = data.activeRouteId && state.routes.some((route) => route.id === data.activeRouteId)
+      ? data.activeRouteId
+      : state.routes[0]?.id || "";
     state.panelCollapsed = Boolean(data.panelCollapsed);
     updateCalibrationScale();
     recalculateAllRoutes();
-    const route = getActiveRoute();
-    if (route) syncInputsFromRoute(route);
-    elements.storageStatus.textContent = "ローカル保存: 復元済み。PDFは再読み込みしてください";
+    syncInputsFromCurrentRoute();
+    render();
+    elements.storageStatus.textContent = "作業読込: 復元済み。PDFは再読み込みしてください";
   } catch {
-    elements.storageStatus.textContent = "ローカル保存: 復元失敗";
+    alert("保存データの読み込みに失敗しました。");
+    elements.storageStatus.textContent = "作業読込: 失敗";
   }
+}
+
+function deleteSavedWork() {
+  if (!confirm("保存されている作業データを削除します。よろしいですか？")) return;
+  localStorage.removeItem(STORAGE_KEY);
+  LEGACY_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key));
+  resetWorkState();
+  render();
+  elements.storageStatus.textContent = "保存データ削除: 完了";
+}
+
+function startNewWork() {
+  if (!confirm("現在の作業内容を破棄して新規作業を開始します。よろしいですか？")) return;
+  resetWorkState();
+  render();
+  elements.storageStatus.textContent = hasSavedWork()
+    ? "新規作業: 空の状態 / 保存済みデータあり"
+    : "新規作業: 空の状態";
+}
+
+function resetWorkState(options = {}) {
+  const keepPanelState = Boolean(options.keepPanelState);
+  const panelCollapsed = keepPanelState ? state.panelCollapsed : false;
+
+  if (pdfRuntime.renderTask) {
+    pdfRuntime.renderTask.cancel();
+  }
+  pdfRuntime.document = null;
+  pdfRuntime.page = null;
+  pdfRuntime.renderTask = null;
+  pdfRuntime.renderKey = "";
+  pdfRuntime.baseViewport = { width: FALLBACK_PAGE_WIDTH, height: FALLBACK_PAGE_HEIGHT };
+  pdfRuntime.cssViewport = { width: FALLBACK_PAGE_WIDTH, height: FALLBACK_PAGE_HEIGHT };
+  pdfRuntime.orientation = "landscape";
+
+  state.pdfName = "";
+  state.hasPdf = false;
+  state.currentPage = 1;
+  state.pageCount = 0;
+  state.zoom = 100;
+  state.viewMode = VIEW_MODES.FIT_WIDTH;
+  state.rotation = 0;
+  state.mode = MODES.ROUTE;
+  state.calibration = null;
+  state.pendingCalibrationPoint = null;
+  state.routes = [];
+  state.activeRouteId = "";
+  state.selectedPointId = "";
+  state.panelCollapsed = panelCollapsed;
+  state.undoStack = [];
+  state.redoStack = [];
+  draggingPointId = "";
+  pointerMoved = false;
+  dragUndoCaptured = false;
+
+  elements.pdfInput.value = "";
+  elements.routeNameInput.value = "";
+  elements.extraLengthInput.value = 300;
+  elements.roundingUnitInput.value = 100;
+}
+
+function initializeApp() {
+  resetWorkState({ keepPanelState: true });
+  render();
+  elements.storageStatus.textContent = hasSavedWork()
+    ? "保存済みの作業データがあります。読み込む場合は「作業読込」を押してください。"
+    : "新規作業: 空の状態";
+}
+
+function dedupeRoutesById(routes) {
+  const byId = new Map();
+  routes.forEach((route) => {
+    if (!route?.id) return;
+    byId.set(route.id, route);
+  });
+  return [...byId.values()];
 }
 
 function normalizeRoute(route) {
@@ -942,7 +1057,7 @@ function normalizeCalibration(calibration) {
 
 function exportCsv() {
   const rows = state.routes
-    .filter((route) => route.points.length >= 2)
+    .filter((route) => route.confirmed && route.points.length >= 2)
     .map((route) => [
       route.name,
       route.segments.length,
@@ -986,7 +1101,7 @@ async function changePage(nextPage) {
   } else {
     render();
   }
-  saveState();
+  markUnsaved();
 }
 
 async function rotatePage(delta) {
@@ -999,7 +1114,7 @@ async function rotatePage(delta) {
   } else {
     render();
   }
-  saveState();
+  markUnsaved();
 }
 
 elements.pdfInput.addEventListener("change", async (event) => {
@@ -1061,14 +1176,14 @@ elements.togglePanelBtn.addEventListener("click", () => {
   state.panelCollapsed = true;
   render();
   if (state.viewMode === VIEW_MODES.FIT_WIDTH) fitWidth(false);
-  saveState();
+  markUnsaved();
 });
 
 elements.openPanelBtn.addEventListener("click", () => {
   state.panelCollapsed = false;
   render();
   if (state.viewMode === VIEW_MODES.FIT_WIDTH) fitWidth(false);
-  saveState();
+  markUnsaved();
 });
 
 elements.calibrationModeBtn.addEventListener("click", () => {
@@ -1076,6 +1191,10 @@ elements.calibrationModeBtn.addEventListener("click", () => {
 });
 
 elements.resetCalibrationBtn.addEventListener("click", resetCalibration);
+elements.newWorkBtn.addEventListener("click", startNewWork);
+elements.saveWorkBtn.addEventListener("click", saveWork);
+elements.loadWorkBtn.addEventListener("click", loadWork);
+elements.deleteSavedWorkBtn.addEventListener("click", deleteSavedWork);
 elements.newRouteBtn.addEventListener("click", createRoute);
 
 elements.confirmRouteBtn.addEventListener("click", () => {
@@ -1086,8 +1205,9 @@ elements.confirmRouteBtn.addEventListener("click", () => {
   }
   syncRouteFromInputs(route);
   route.confirmed = true;
+  state.routes = dedupeRoutesById(state.routes);
   render();
-  saveState();
+  markUnsaved();
 });
 
 elements.resetRouteBtn.addEventListener("click", () => {
@@ -1101,7 +1221,7 @@ elements.resetRouteBtn.addEventListener("click", () => {
   state.selectedPointId = "";
   recalculateRoute(route);
   render();
-  saveState();
+  markUnsaved();
 });
 
 elements.exportCsvBtn.addEventListener("click", exportCsv);
@@ -1129,7 +1249,7 @@ elements.deleteLastPointBtn.addEventListener("click", deleteLastPoint);
     const route = getActiveRoute();
     syncRouteFromInputs(route);
     render();
-    saveState();
+    markUnsaved();
   });
 });
 
@@ -1151,7 +1271,7 @@ elements.segmentTableBody.addEventListener("input", (event) => {
   segment.selectedLengthMm = value;
   segment.inputMethod = "manual";
   recalculateRoute(route);
-  saveState();
+  markUnsaved();
   renderResults();
   renderRoutes();
 });
@@ -1168,9 +1288,9 @@ elements.routeTableBody.addEventListener("click", (event) => {
   if (!row) return;
   state.activeRouteId = row.dataset.routeId;
   state.selectedPointId = "";
-  syncInputsFromRoute(getActiveRoute());
+  syncInputsFromCurrentRoute();
   render();
-  saveState();
+  markUnsaved();
 });
 
 elements.pdfStage.addEventListener(
@@ -1203,7 +1323,7 @@ elements.overlay.addEventListener("pointerdown", (event) => {
   draggingPointId = pointId;
   pointerMoved = false;
   dragUndoCaptured = false;
-  syncInputsFromRoute(getActiveRoute());
+    syncInputsFromCurrentRoute();
   elements.overlay.setPointerCapture(event.pointerId);
   render();
 });
@@ -1220,7 +1340,7 @@ elements.overlay.addEventListener("pointermove", (event) => {
 
 elements.overlay.addEventListener("pointerup", (event) => {
   if (draggingPointId) {
-    saveState();
+    markUnsaved();
     draggingPointId = "";
     dragUndoCaptured = false;
     try {
@@ -1291,5 +1411,4 @@ window.addEventListener("resize", () => {
   }
 });
 
-loadState();
-render();
+initializeApp();
