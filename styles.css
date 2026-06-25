@@ -451,7 +451,8 @@ td input {
 
 .overlay-point.selected {
   stroke: var(--amber);
-  stroke-width: 5;
+  stroke-width: 6;
+  filter: drop-shadow(0 0 4px rgba(161, 92, 8, 0.7));
 }
 
 .overlay-label {
@@ -463,6 +464,12 @@ td input {
   stroke-width: 4px;
   user-select: none;
   pointer-events: none;
+}
+
+.overlay-label.selected {
+  font-size: 16px;
+  fill: var(--amber);
+  stroke-width: 5px;
 }
 
 @media (max-width: 1040px) {

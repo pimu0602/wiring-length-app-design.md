@@ -94,12 +94,11 @@
         <div class="button-grid">
           <button id="newRouteBtn" type="button">新規ルート</button>
           <button id="confirmRouteBtn" type="button">ルート確定</button>
-          <button id="newWorkBtn" type="button">新規作業</button>
-          <button id="saveWorkBtn" type="button">作業保存</button>
-          <button id="loadWorkBtn" type="button">作業読込</button>
-          <button id="deleteSavedWorkBtn" type="button">保存データ削除</button>
           <button id="calibrationModeBtn" type="button">基準寸法設定</button>
           <button id="resetCalibrationBtn" type="button">基準寸法リセット</button>
+          <button id="selectPrevPointBtn" type="button" disabled>前の点を選択</button>
+          <button id="selectNextPointBtn" type="button" disabled>次の点を選択</button>
+          <button id="clearPointSelectionBtn" type="button" disabled>選択解除</button>
           <button id="deleteLastPointBtn" type="button" disabled>最後の点を削除</button>
           <button id="deleteSelectedPointPanelBtn" type="button" disabled>選択点削除</button>
           <button id="resetRouteBtn" type="button">ルートリセット</button>
@@ -138,6 +137,36 @@
             <div>
               <dt>状態</dt>
               <dd id="routeState">未作成</dd>
+            </div>
+          </dl>
+        </div>
+
+        <div class="control-group">
+          <h2>選択中の点</h2>
+          <dl class="route-meta">
+            <div>
+              <dt>選択</dt>
+              <dd id="selectedPointLabel">選択中の点はありません</dd>
+            </div>
+            <div>
+              <dt>xRatio</dt>
+              <dd id="selectedPointX">-</dd>
+            </div>
+            <div>
+              <dt>yRatio</dt>
+              <dd id="selectedPointY">-</dd>
+            </div>
+            <div>
+              <dt>page</dt>
+              <dd id="selectedPointPage">-</dd>
+            </div>
+            <div>
+              <dt>前の点</dt>
+              <dd id="selectedPointPrev">-</dd>
+            </div>
+            <div>
+              <dt>次の点</dt>
+              <dd id="selectedPointNext">-</dd>
             </div>
           </dl>
         </div>

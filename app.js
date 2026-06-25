@@ -2,8 +2,6 @@ import * as pdfjsLib from "./vendor/pdfjs/pdf.min.mjs";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = "./vendor/pdfjs/pdf.worker.min.mjs";
 
-const STORAGE_KEY = "wiring-length-app-v3";
-const LEGACY_STORAGE_KEYS = ["wiring-length-app-v2", "wiring-length-app-v1"];
 const ROUTE_COLORS = ["#c4312f", "#13795b", "#a15c08", "#7f4aa3", "#1d5f8f"];
 const FALLBACK_PAGE_WIDTH = 900;
 const FALLBACK_PAGE_HEIGHT = 636;
@@ -53,12 +51,11 @@ const elements = {
   roundingUnitInput: document.getElementById("roundingUnitInput"),
   newRouteBtn: document.getElementById("newRouteBtn"),
   confirmRouteBtn: document.getElementById("confirmRouteBtn"),
-  newWorkBtn: document.getElementById("newWorkBtn"),
-  saveWorkBtn: document.getElementById("saveWorkBtn"),
-  loadWorkBtn: document.getElementById("loadWorkBtn"),
-  deleteSavedWorkBtn: document.getElementById("deleteSavedWorkBtn"),
   calibrationModeBtn: document.getElementById("calibrationModeBtn"),
   resetCalibrationBtn: document.getElementById("resetCalibrationBtn"),
+  selectPrevPointBtn: document.getElementById("selectPrevPointBtn"),
+  selectNextPointBtn: document.getElementById("selectNextPointBtn"),
+  clearPointSelectionBtn: document.getElementById("clearPointSelectionBtn"),
   deleteLastPointBtn: document.getElementById("deleteLastPointBtn"),
   deleteSelectedPointPanelBtn: document.getElementById("deleteSelectedPointPanelBtn"),
   resetRouteBtn: document.getElementById("resetRouteBtn"),
@@ -76,6 +73,12 @@ const elements = {
   totalLength: document.getElementById("totalLength"),
   recommendedCutLength: document.getElementById("recommendedCutLength"),
   recommendedCutLengthM: document.getElementById("recommendedCutLengthM"),
+  selectedPointLabel: document.getElementById("selectedPointLabel"),
+  selectedPointX: document.getElementById("selectedPointX"),
+  selectedPointY: document.getElementById("selectedPointY"),
+  selectedPointPage: document.getElementById("selectedPointPage"),
+  selectedPointPrev: document.getElementById("selectedPointPrev"),
+  selectedPointNext: document.getElementById("selectedPointNext"),
   storageStatus: document.getElementById("storageStatus"),
 };
 
@@ -302,6 +305,7 @@ function render() {
   renderResults();
   renderRoutes();
   renderMeta();
+  renderSelectedPointInfo();
 }
 
 function renderMode() {
@@ -395,9 +399,11 @@ function setEmptyStateVisible(isVisible) {
 
 function setMode(mode) {
   state.mode = mode;
-  if (mode !== MODES.CALIBRATION) {
-    state.pendingCalibrationPoint = null;
-  }
+  state.selectedPointId = "";
+  draggingPointId = "";
+  pointerMoved = false;
+  dragUndoCaptured = false;
+  state.pendingCalibrationPoint = null;
   render();
   markUnsaved();
 }
@@ -526,6 +532,7 @@ function deletePoint(pointId) {
 }
 
 function deleteLastPoint() {
+  if (state.mode !== MODES.ROUTE) return;
   const route = getActiveRoute();
   if (!route || route.points.length === 0) return;
   pushUndo();
@@ -581,6 +588,7 @@ function handleCalibrationClick(clientX, clientY) {
 }
 
 function resetCalibration() {
+  if (state.mode !== MODES.CALIBRATION) return;
   if (!state.calibration && !state.pendingCalibrationPoint) return;
   pushUndo();
   state.calibration = null;
@@ -670,9 +678,21 @@ function renderOverlay() {
 
   const route = getActiveRoute();
   const hasSelectedPoint = Boolean(state.selectedPointId);
-  elements.deletePointBtn.disabled = !hasSelectedPoint;
-  elements.deleteSelectedPointPanelBtn.disabled = !hasSelectedPoint;
-  elements.deleteLastPointBtn.disabled = !route || route.points.length === 0;
+  const isRouteMode = state.mode === MODES.ROUTE;
+  const isCalibrationMode = state.mode === MODES.CALIBRATION;
+  const isEditMode = state.mode === MODES.EDIT;
+  const hasPoints = Boolean(route && route.points.length > 0);
+
+  elements.confirmRouteBtn.disabled = !isRouteMode || !route || route.points.length < 2;
+  elements.resetRouteBtn.disabled = !isRouteMode || !route || route.points.length === 0;
+  elements.deleteLastPointBtn.disabled = !isRouteMode || !hasPoints;
+  elements.calibrationModeBtn.disabled = isCalibrationMode;
+  elements.resetCalibrationBtn.disabled = !isCalibrationMode || (!state.calibration && !state.pendingCalibrationPoint);
+  elements.selectPrevPointBtn.disabled = !isEditMode || !hasPoints;
+  elements.selectNextPointBtn.disabled = !isEditMode || !hasPoints;
+  elements.clearPointSelectionBtn.disabled = !isEditMode || !hasSelectedPoint;
+  elements.deletePointBtn.disabled = !isEditMode || !hasSelectedPoint;
+  elements.deleteSelectedPointPanelBtn.disabled = !isEditMode || !hasSelectedPoint;
   elements.undoBtn.disabled = state.undoStack.length === 0;
   elements.redoBtn.disabled = state.redoStack.length === 0;
 }
@@ -750,13 +770,14 @@ function renderRouteLines(route, color) {
 function renderRoutePoints(route, color) {
   route.points.forEach((point, index) => {
     if (point.page !== state.currentPage) return;
+    const isSelected = point.id === state.selectedPointId;
 
     const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
     circle.setAttribute("cx", `${point.xRatio * 100}%`);
     circle.setAttribute("cy", `${point.yRatio * 100}%`);
-    circle.setAttribute("r", route.id === state.activeRouteId ? "8" : "6");
+    circle.setAttribute("r", isSelected ? "12" : route.id === state.activeRouteId ? "8" : "6");
     circle.setAttribute("fill", color);
-    circle.setAttribute("class", point.id === state.selectedPointId ? "overlay-point selected" : "overlay-point");
+    circle.setAttribute("class", isSelected ? "overlay-point selected" : "overlay-point");
     circle.dataset.pointId = point.id;
     circle.dataset.routeId = route.id;
     elements.overlay.appendChild(circle);
@@ -766,7 +787,7 @@ function renderRoutePoints(route, color) {
     label.setAttribute("y", `${point.yRatio * 100}%`);
     label.setAttribute("dx", "11");
     label.setAttribute("dy", "-11");
-    label.setAttribute("class", "overlay-label");
+    label.setAttribute("class", isSelected ? "overlay-label selected" : "overlay-label");
     label.textContent = `点${index + 1}`;
     elements.overlay.appendChild(label);
   });
@@ -862,6 +883,52 @@ function renderMeta() {
   elements.calibrationScale.textContent = `1px = ${state.calibration.mmPerPixel.toFixed(3)}mm`;
 }
 
+function renderSelectedPointInfo() {
+  const route = getActiveRoute();
+  const pointIndex = route?.points.findIndex((point) => point.id === state.selectedPointId) ?? -1;
+  const point = pointIndex >= 0 ? route.points[pointIndex] : null;
+
+  if (!route || !point) {
+    elements.selectedPointLabel.textContent = "選択中の点はありません";
+    elements.selectedPointX.textContent = "-";
+    elements.selectedPointY.textContent = "-";
+    elements.selectedPointPage.textContent = "-";
+    elements.selectedPointPrev.textContent = "-";
+    elements.selectedPointNext.textContent = "-";
+    return;
+  }
+
+  elements.selectedPointLabel.textContent = `点${pointIndex + 1}`;
+  elements.selectedPointX.textContent = point.xRatio.toFixed(4);
+  elements.selectedPointY.textContent = point.yRatio.toFixed(4);
+  elements.selectedPointPage.textContent = String(point.page);
+  elements.selectedPointPrev.textContent = pointIndex > 0 ? `点${pointIndex}` : "なし";
+  elements.selectedPointNext.textContent = pointIndex < route.points.length - 1 ? `点${pointIndex + 2}` : "なし";
+}
+
+function clearPointSelection() {
+  if (!state.selectedPointId) return;
+  state.selectedPointId = "";
+  render();
+}
+
+function selectPointByOffset(offset) {
+  if (state.mode !== MODES.EDIT) return;
+  const route = getActiveRoute();
+  if (!route || route.points.length === 0) return;
+
+  const currentIndex = route.points.findIndex((point) => point.id === state.selectedPointId);
+  let nextIndex;
+  if (currentIndex < 0) {
+    nextIndex = offset > 0 ? 0 : route.points.length - 1;
+  } else {
+    nextIndex = clamp(currentIndex + offset, 0, route.points.length - 1);
+  }
+
+  state.selectedPointId = route.points[nextIndex].id;
+  render();
+}
+
 function formatMeters(mm) {
   return (mm / 1000).toLocaleString("ja-JP", {
     minimumFractionDigits: 0,
@@ -878,91 +945,8 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
-function createPersistedState() {
-  return {
-    pdfName: state.pdfName,
-    currentPage: state.currentPage,
-    pageCount: state.pageCount,
-    zoom: state.zoom,
-    viewMode: state.viewMode,
-    rotation: state.rotation,
-    mode: state.mode,
-    calibration: state.calibration,
-    routes: dedupeRoutesById(state.routes),
-    activeRouteId: state.activeRouteId,
-    panelCollapsed: state.panelCollapsed,
-  };
-}
-
-function saveWork() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(createPersistedState()));
-  elements.storageStatus.textContent = "作業保存: 保存済み";
-}
-
 function markUnsaved() {
-  elements.storageStatus.textContent = hasSavedWork()
-    ? "未保存の変更あり / 保存済みデータあり"
-    : "未保存の変更あり";
-}
-
-function hasSavedWork() {
-  return Boolean(localStorage.getItem(STORAGE_KEY) || LEGACY_STORAGE_KEYS.some((key) => localStorage.getItem(key)));
-}
-
-function getSavedWorkRaw() {
-  return localStorage.getItem(STORAGE_KEY) || LEGACY_STORAGE_KEYS.map((key) => localStorage.getItem(key)).find(Boolean);
-}
-
-function loadWork() {
-  const raw = getSavedWorkRaw();
-  if (!raw) {
-    alert("保存された作業データはありません。");
-    return;
-  }
-
-  try {
-    const data = JSON.parse(raw);
-    resetWorkState({ keepPanelState: false });
-    state.pdfName = data.pdfName || "";
-    state.currentPage = data.currentPage || 1;
-    state.pageCount = data.pageCount || 0;
-    state.zoom = data.zoom || 100;
-    state.viewMode = data.viewMode || VIEW_MODES.FIT_WIDTH;
-    state.rotation = normalizeRotation(data.rotation || 0);
-    state.mode = Object.values(MODES).includes(data.mode) ? data.mode : MODES.ROUTE;
-    state.calibration = normalizeCalibration(data.calibration);
-    state.routes = dedupeRoutesById(Array.isArray(data.routes) ? data.routes.map(normalizeRoute) : []);
-    state.activeRouteId = data.activeRouteId && state.routes.some((route) => route.id === data.activeRouteId)
-      ? data.activeRouteId
-      : state.routes[0]?.id || "";
-    state.panelCollapsed = Boolean(data.panelCollapsed);
-    updateCalibrationScale();
-    recalculateAllRoutes();
-    syncInputsFromCurrentRoute();
-    render();
-    elements.storageStatus.textContent = "作業読込: 復元済み。PDFは再読み込みしてください";
-  } catch {
-    alert("保存データの読み込みに失敗しました。");
-    elements.storageStatus.textContent = "作業読込: 失敗";
-  }
-}
-
-function deleteSavedWork() {
-  if (!confirm("保存されている作業データを削除します。よろしいですか？")) return;
-  localStorage.removeItem(STORAGE_KEY);
-  LEGACY_STORAGE_KEYS.forEach((key) => localStorage.removeItem(key));
-  resetWorkState();
-  render();
-  elements.storageStatus.textContent = "保存データ削除: 完了";
-}
-
-function startNewWork() {
-  if (!confirm("現在の作業内容を破棄して新規作業を開始します。よろしいですか？")) return;
-  resetWorkState();
-  render();
-  elements.storageStatus.textContent = hasSavedWork()
-    ? "新規作業: 空の状態 / 保存済みデータあり"
-    : "新規作業: 空の状態";
+  elements.storageStatus.textContent = "未保存の変更あり";
 }
 
 function resetWorkState(options = {}) {
@@ -1009,9 +993,7 @@ function resetWorkState(options = {}) {
 function initializeApp() {
   resetWorkState({ keepPanelState: true });
   render();
-  elements.storageStatus.textContent = hasSavedWork()
-    ? "保存済みの作業データがあります。読み込む場合は「作業読込」を押してください。"
-    : "新規作業: 空の状態";
+  elements.storageStatus.textContent = "新規作業: 空の状態";
 }
 
 function dedupeRoutesById(routes) {
@@ -1191,13 +1173,10 @@ elements.calibrationModeBtn.addEventListener("click", () => {
 });
 
 elements.resetCalibrationBtn.addEventListener("click", resetCalibration);
-elements.newWorkBtn.addEventListener("click", startNewWork);
-elements.saveWorkBtn.addEventListener("click", saveWork);
-elements.loadWorkBtn.addEventListener("click", loadWork);
-elements.deleteSavedWorkBtn.addEventListener("click", deleteSavedWork);
 elements.newRouteBtn.addEventListener("click", createRoute);
 
 elements.confirmRouteBtn.addEventListener("click", () => {
+  if (state.mode !== MODES.ROUTE) return;
   const route = getActiveRoute();
   if (!route || route.points.length < 2) {
     alert("ルート確定には2点以上が必要です。");
@@ -1211,6 +1190,7 @@ elements.confirmRouteBtn.addEventListener("click", () => {
 });
 
 elements.resetRouteBtn.addEventListener("click", () => {
+  if (state.mode !== MODES.ROUTE) return;
   const route = getActiveRoute();
   if (!route) return;
   if (!confirm("現在のルートをすべて削除します。よろしいですか？")) return;
@@ -1227,14 +1207,17 @@ elements.resetRouteBtn.addEventListener("click", () => {
 elements.exportCsvBtn.addEventListener("click", exportCsv);
 
 elements.deletePointBtn.addEventListener("click", () => {
-  if (state.selectedPointId) deletePoint(state.selectedPointId);
+  if (state.mode === MODES.EDIT && state.selectedPointId) deletePoint(state.selectedPointId);
 });
 
 elements.deleteSelectedPointPanelBtn.addEventListener("click", () => {
-  if (state.selectedPointId) deletePoint(state.selectedPointId);
+  if (state.mode === MODES.EDIT && state.selectedPointId) deletePoint(state.selectedPointId);
 });
 
 elements.deleteLastPointBtn.addEventListener("click", deleteLastPoint);
+elements.selectPrevPointBtn.addEventListener("click", () => selectPointByOffset(-1));
+elements.selectNextPointBtn.addEventListener("click", () => selectPointByOffset(1));
+elements.clearPointSelectionBtn.addEventListener("click", clearPointSelection);
 
 [elements.routeNameInput, elements.extraLengthInput, elements.roundingUnitInput].forEach((input) => {
   input.addEventListener("focusout", () => {
@@ -1312,18 +1295,18 @@ elements.pdfStage.addEventListener(
 );
 
 elements.overlay.addEventListener("pointerdown", (event) => {
-  if (state.mode === MODES.CALIBRATION) return;
+  if (state.mode !== MODES.EDIT) return;
 
   const pointId = event.target.dataset?.pointId;
   const routeId = event.target.dataset?.routeId;
   if (!pointId || !routeId) return;
+  if (state.selectedPointId !== pointId) return;
 
   state.activeRouteId = routeId;
-  state.selectedPointId = pointId;
   draggingPointId = pointId;
   pointerMoved = false;
   dragUndoCaptured = false;
-    syncInputsFromCurrentRoute();
+  syncInputsFromCurrentRoute();
   elements.overlay.setPointerCapture(event.pointerId);
   render();
 });
@@ -1362,7 +1345,19 @@ elements.overlay.addEventListener("click", (event) => {
     return;
   }
 
-  if (event.target.dataset?.pointId) return;
+  const pointId = event.target.dataset?.pointId;
+  const routeId = event.target.dataset?.routeId;
+
+  if (state.mode === MODES.EDIT) {
+    if (pointId && routeId) {
+      state.activeRouteId = routeId;
+      state.selectedPointId = state.selectedPointId === pointId ? "" : pointId;
+    } else {
+      state.selectedPointId = "";
+    }
+    render();
+    return;
+  }
 
   if (state.mode === MODES.ROUTE) {
     addRoutePoint(event.clientX, event.clientY);
@@ -1371,7 +1366,7 @@ elements.overlay.addEventListener("click", (event) => {
 
 elements.overlay.addEventListener("contextmenu", (event) => {
   const pointId = event.target.dataset?.pointId;
-  if (!pointId) return;
+  if (!pointId || state.mode !== MODES.EDIT) return;
   event.preventDefault();
   deletePoint(pointId);
 });
@@ -1396,7 +1391,7 @@ document.addEventListener("keydown", (event) => {
     return;
   }
 
-  if (event.key === "Delete" && state.selectedPointId) {
+  if (event.key === "Delete" && state.mode === MODES.EDIT && state.selectedPointId) {
     event.preventDefault();
     deletePoint(state.selectedPointId);
   }
