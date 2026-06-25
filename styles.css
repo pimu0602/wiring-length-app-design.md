@@ -116,6 +116,10 @@ h2 {
   padding: 14px;
 }
 
+.workspace.panel-collapsed {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .drawing-pane,
 .control-pane,
 .bottom-pane > div {
@@ -128,6 +132,7 @@ h2 {
   min-height: 620px;
   display: flex;
   flex-direction: column;
+  min-width: 0;
 }
 
 .drawing-toolbar {
@@ -195,7 +200,7 @@ h2 {
 .pdf-page {
   position: relative;
   width: 900px;
-  height: 1273px;
+  height: 636px;
   margin: 24px auto;
   background: #fff;
   box-shadow: 0 6px 18px rgba(25, 39, 52, 0.18);
@@ -206,11 +211,10 @@ h2 {
   display: none !important;
 }
 
-#pdfFrame {
+.pdf-canvas {
   display: block;
   width: 100%;
   height: 100%;
-  border: 0;
   background: #fff;
   opacity: 1;
   z-index: 0;
@@ -253,6 +257,29 @@ h2 {
 
 .control-pane {
   padding: 14px;
+}
+
+.workspace.panel-collapsed .control-pane {
+  display: none;
+}
+
+.panel-toggle {
+  width: 100%;
+  margin-bottom: 14px;
+  background: #1f3f4f;
+  border-color: #1f3f4f;
+  color: #fff;
+}
+
+.panel-open-button {
+  position: fixed;
+  right: 18px;
+  top: 86px;
+  z-index: 20;
+  background: #1f3f4f;
+  border-color: #1f3f4f;
+  color: #fff;
+  box-shadow: var(--shadow);
 }
 
 .control-group {

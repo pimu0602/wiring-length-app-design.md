@@ -16,6 +16,7 @@
         <span id="storageStatus">ローカル保存: 待機中</span>
       </div>
     </header>
+    <button id="openPanelBtn" class="panel-open-button" type="button" hidden>設定パネルを開く</button>
 
     <main class="workspace">
       <section class="drawing-pane" aria-label="PDF図面表示エリア">
@@ -33,8 +34,20 @@
           <button id="zoomOutBtn" type="button">縮小</button>
           <span id="zoomLabel">100%</span>
           <button id="zoomInBtn" type="button">拡大</button>
+          <label class="inline-field">
+            表示
+            <select id="viewModeSelect">
+              <option value="fit-width">表示幅に合わせる</option>
+              <option value="fit-page">ページ全体表示</option>
+              <option value="100">100%</option>
+              <option value="150">150%</option>
+              <option value="200">200%</option>
+            </select>
+          </label>
           <button id="fitWidthBtn" type="button">幅に合わせる</button>
           <button id="fitPageBtn" type="button">全体表示</button>
+          <button id="rotateLeftBtn" type="button">左回転</button>
+          <button id="rotateRightBtn" type="button">右回転</button>
           <label class="inline-field">
             操作モード
             <select id="modeSelect">
@@ -48,7 +61,7 @@
 
         <div id="pdfStage" class="pdf-stage">
           <div id="pdfPage" class="pdf-page">
-            <iframe id="pdfFrame" title="読み込んだPDF図面"></iframe>
+            <canvas id="pdfCanvas" class="pdf-canvas" aria-label="読み込んだPDF図面"></canvas>
             <svg id="routeOverlay" class="route-overlay" aria-label="配線ルート編集レイヤー"></svg>
           </div>
           <div id="emptyState" class="empty-state">
@@ -58,7 +71,8 @@
         </div>
       </section>
 
-      <aside class="control-pane" aria-label="操作パネル">
+      <aside id="controlPane" class="control-pane" aria-label="操作パネル">
+        <button id="togglePanelBtn" class="panel-toggle" type="button">設定パネルを閉じる</button>
         <div class="control-group">
           <h2>ルート設定</h2>
           <label>
@@ -194,6 +208,6 @@
       </div>
     </section>
 
-    <script src="./app.js"></script>
+    <script type="module" src="./app.js"></script>
   </body>
 </html>

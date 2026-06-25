@@ -1,10 +1,14 @@
-const STORAGE_KEY = "wiring-length-app-v2";
-const LEGACY_STORAGE_KEY = "wiring-length-app-v1";
+import * as pdfjsLib from "./vendor/pdfjs/pdf.min.mjs";
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = "./vendor/pdfjs/pdf.worker.min.mjs";
+
+const STORAGE_KEY = "wiring-length-app-v3";
+const LEGACY_STORAGE_KEYS = ["wiring-length-app-v2", "wiring-length-app-v1"];
 const ROUTE_COLORS = ["#c4312f", "#13795b", "#a15c08", "#7f4aa3", "#1d5f8f"];
-const PAGE_BASE_WIDTH = 900;
-const PAGE_BASE_HEIGHT = 1273;
-const MIN_ZOOM = 40;
-const MAX_ZOOM = 260;
+const FALLBACK_PAGE_WIDTH = 900;
+const FALLBACK_PAGE_HEIGHT = 636;
+const MIN_ZOOM = 25;
+const MAX_ZOOM = 400;
 
 const MODES = {
   ROUTE: "route",
@@ -12,11 +16,18 @@ const MODES = {
   EDIT: "edit",
 };
 
+const VIEW_MODES = {
+  FIT_WIDTH: "fit-width",
+  FIT_PAGE: "fit-page",
+  CUSTOM: "custom",
+};
+
 const elements = {
+  workspace: document.querySelector(".workspace"),
   pdfInput: document.getElementById("pdfInput"),
   pdfStage: document.getElementById("pdfStage"),
   pdfPage: document.getElementById("pdfPage"),
-  pdfFrame: document.getElementById("pdfFrame"),
+  pdfCanvas: document.getElementById("pdfCanvas"),
   emptyState: document.getElementById("emptyState"),
   overlay: document.getElementById("routeOverlay"),
   pageInput: document.getElementById("pageInput"),
@@ -24,11 +35,17 @@ const elements = {
   nextPageBtn: document.getElementById("nextPageBtn"),
   zoomOutBtn: document.getElementById("zoomOutBtn"),
   zoomInBtn: document.getElementById("zoomInBtn"),
+  viewModeSelect: document.getElementById("viewModeSelect"),
   fitWidthBtn: document.getElementById("fitWidthBtn"),
   fitPageBtn: document.getElementById("fitPageBtn"),
+  rotateLeftBtn: document.getElementById("rotateLeftBtn"),
+  rotateRightBtn: document.getElementById("rotateRightBtn"),
   zoomLabel: document.getElementById("zoomLabel"),
   modeSelect: document.getElementById("modeSelect"),
   deletePointBtn: document.getElementById("deletePointBtn"),
+  controlPane: document.getElementById("controlPane"),
+  togglePanelBtn: document.getElementById("togglePanelBtn"),
+  openPanelBtn: document.getElementById("openPanelBtn"),
   routeNameInput: document.getElementById("routeNameInput"),
   extraLengthInput: document.getElementById("extraLengthInput"),
   roundingUnitInput: document.getElementById("roundingUnitInput"),
@@ -55,17 +72,31 @@ const elements = {
 };
 
 const state = {
-  pdfUrl: "",
   pdfName: "",
-  pdfFrameSrc: "",
+  hasPdf: false,
   currentPage: 1,
+  pageCount: 0,
   zoom: 100,
+  viewMode: VIEW_MODES.FIT_WIDTH,
+  rotation: 0,
   mode: MODES.ROUTE,
   calibration: null,
   pendingCalibrationPoint: null,
   routes: [],
   activeRouteId: "",
   selectedPointId: "",
+  panelCollapsed: false,
+};
+
+const pdfRuntime = {
+  document: null,
+  page: null,
+  renderTask: null,
+  renderId: 0,
+  renderKey: "",
+  baseViewport: { width: FALLBACK_PAGE_WIDTH, height: FALLBACK_PAGE_HEIGHT },
+  cssViewport: { width: FALLBACK_PAGE_WIDTH, height: FALLBACK_PAGE_HEIGHT },
+  orientation: "landscape",
 };
 
 let draggingPointId = "";
@@ -91,6 +122,46 @@ function getPositiveNumber(value, fallback) {
 function getNonNegativeNumber(value, fallback) {
   const number = Number(value);
   return Number.isFinite(number) && number >= 0 ? number : fallback;
+}
+
+async function loadPdfFile(file) {
+  const buffer = await file.arrayBuffer();
+  if (pdfRuntime.renderTask) {
+    pdfRuntime.renderTask.cancel();
+  }
+
+  pdfRuntime.document = await pdfjsLib.getDocument({ data: new Uint8Array(buffer) }).promise;
+  state.pdfName = file.name;
+  state.hasPdf = true;
+  state.currentPage = 1;
+  state.pageCount = pdfRuntime.document.numPages;
+  state.rotation = 0;
+  state.viewMode = VIEW_MODES.FIT_WIDTH;
+  pdfRuntime.renderKey = "";
+  await loadPdfPage(1);
+  fitWidth(false);
+  render();
+  saveState();
+}
+
+async function loadPdfPage(pageNumber) {
+  if (!pdfRuntime.document) return;
+  state.currentPage = clamp(pageNumber, 1, pdfRuntime.document.numPages);
+  pdfRuntime.page = await pdfRuntime.document.getPage(state.currentPage);
+  pdfRuntime.renderKey = "";
+  updateBaseViewport();
+}
+
+function updateBaseViewport() {
+  if (!pdfRuntime.page) {
+    pdfRuntime.baseViewport = { width: FALLBACK_PAGE_WIDTH, height: FALLBACK_PAGE_HEIGHT };
+    pdfRuntime.orientation = "landscape";
+    return;
+  }
+
+  const viewport = pdfRuntime.page.getViewport({ scale: 1, rotation: state.rotation });
+  pdfRuntime.baseViewport = { width: viewport.width, height: viewport.height };
+  pdfRuntime.orientation = viewport.width > viewport.height ? "landscape" : "portrait";
 }
 
 function createRoute() {
@@ -134,6 +205,7 @@ function syncInputsFromRoute(route) {
 
 function render() {
   renderMode();
+  renderPanel();
   renderPdfLayer();
   updateCalibrationScale();
   recalculateAllRoutes();
@@ -146,35 +218,86 @@ function render() {
 
 function renderMode() {
   elements.modeSelect.value = state.mode;
+  if ([VIEW_MODES.FIT_WIDTH, VIEW_MODES.FIT_PAGE].includes(state.viewMode)) {
+    elements.viewModeSelect.value = state.viewMode;
+  } else if ([100, 150, 200].includes(Math.round(state.zoom))) {
+    elements.viewModeSelect.value = String(Math.round(state.zoom));
+  }
+}
+
+function renderPanel() {
+  elements.workspace.classList.toggle("panel-collapsed", state.panelCollapsed);
+  elements.openPanelBtn.hidden = !state.panelCollapsed;
 }
 
 function renderPdfLayer() {
-  const hasPdf = Boolean(state.pdfUrl);
+  const hasPdf = Boolean(state.hasPdf && pdfRuntime.page);
   elements.pdfPage.hidden = !hasPdf;
   setEmptyStateVisible(!hasPdf);
-  renderPdfPageSize();
 
   if (!hasPdf) {
-    elements.pdfFrame.removeAttribute("src");
-    state.pdfFrameSrc = "";
+    setPdfPageSize(FALLBACK_PAGE_WIDTH, FALLBACK_PAGE_HEIGHT);
     return;
   }
 
-  const page = Math.max(1, Number(state.currentPage) || 1);
-  const nextSrc = `${state.pdfUrl}#page=${page}&toolbar=0&navpanes=0&scrollbar=0&view=Fit`;
-  if (state.pdfFrameSrc !== nextSrc) {
-    elements.pdfFrame.src = nextSrc;
-    state.pdfFrameSrc = nextSrc;
-  }
-  elements.pageInput.value = page;
-  elements.zoomLabel.textContent = `${state.zoom}%`;
+  renderPdfPageSize();
+  renderPdfCanvas();
+  elements.pageInput.value = state.currentPage;
+  elements.pageInput.max = state.pageCount || "";
+  elements.zoomLabel.textContent = `${Math.round(state.zoom)}%`;
+}
+
+function setPdfPageSize(width, height) {
+  elements.pdfPage.style.width = `${Math.round(width)}px`;
+  elements.pdfPage.style.height = `${Math.round(height)}px`;
 }
 
 function renderPdfPageSize() {
-  const width = Math.round(PAGE_BASE_WIDTH * (state.zoom / 100));
-  const height = Math.round(PAGE_BASE_HEIGHT * (state.zoom / 100));
-  elements.pdfPage.style.width = `${width}px`;
-  elements.pdfPage.style.height = `${height}px`;
+  const width = pdfRuntime.baseViewport.width * (state.zoom / 100);
+  const height = pdfRuntime.baseViewport.height * (state.zoom / 100);
+  pdfRuntime.cssViewport = { width, height };
+  setPdfPageSize(width, height);
+}
+
+async function renderPdfCanvas() {
+  if (!pdfRuntime.page) return;
+
+  const key = `${state.currentPage}:${state.zoom}:${state.rotation}`;
+  if (pdfRuntime.renderKey === key) return;
+  pdfRuntime.renderKey = key;
+
+  const renderId = ++pdfRuntime.renderId;
+  const viewport = pdfRuntime.page.getViewport({ scale: state.zoom / 100, rotation: state.rotation });
+  const outputScale = window.devicePixelRatio || 1;
+  const canvas = elements.pdfCanvas;
+  const context = canvas.getContext("2d");
+
+  canvas.width = Math.floor(viewport.width * outputScale);
+  canvas.height = Math.floor(viewport.height * outputScale);
+  canvas.style.width = `${viewport.width}px`;
+  canvas.style.height = `${viewport.height}px`;
+
+  if (pdfRuntime.renderTask) {
+    pdfRuntime.renderTask.cancel();
+  }
+
+  context.setTransform(1, 0, 0, 1, 0, 0);
+  context.clearRect(0, 0, canvas.width, canvas.height);
+
+  const transform = outputScale !== 1 ? [outputScale, 0, 0, outputScale, 0, 0] : null;
+  pdfRuntime.renderTask = pdfRuntime.page.render({ canvasContext: context, viewport, transform });
+
+  try {
+    await pdfRuntime.renderTask.promise;
+  } catch (error) {
+    if (error?.name !== "RenderingCancelledException") {
+      console.error(error);
+    }
+  } finally {
+    if (renderId === pdfRuntime.renderId) {
+      pdfRuntime.renderTask = null;
+    }
+  }
 }
 
 function setEmptyStateVisible(isVisible) {
@@ -191,7 +314,7 @@ function setMode(mode) {
   saveState();
 }
 
-function setZoom(nextZoom, anchorEvent) {
+function setZoom(nextZoom, anchorEvent, viewMode = VIEW_MODES.CUSTOM) {
   const stage = elements.pdfStage;
   const oldSize = getPageSize();
   let anchorXRatio = 0.5;
@@ -204,6 +327,7 @@ function setZoom(nextZoom, anchorEvent) {
   }
 
   state.zoom = clamp(Math.round(nextZoom), MIN_ZOOM, MAX_ZOOM);
+  state.viewMode = viewMode;
   render();
 
   const newSize = getPageSize();
@@ -212,21 +336,27 @@ function setZoom(nextZoom, anchorEvent) {
   saveState();
 }
 
-function fitWidth() {
+function fitWidth(shouldSave = true) {
+  updateBaseViewport();
   const availableWidth = Math.max(320, elements.pdfStage.clientWidth - 48);
-  setZoom((availableWidth / PAGE_BASE_WIDTH) * 100);
+  setZoom((availableWidth / pdfRuntime.baseViewport.width) * 100, null, VIEW_MODES.FIT_WIDTH);
+  if (shouldSave) saveState();
 }
 
-function fitPage() {
+function fitPage(shouldSave = true) {
+  updateBaseViewport();
   const availableWidth = Math.max(320, elements.pdfStage.clientWidth - 48);
   const availableHeight = Math.max(320, elements.pdfStage.clientHeight - 48);
-  setZoom(Math.min(availableWidth / PAGE_BASE_WIDTH, availableHeight / PAGE_BASE_HEIGHT) * 100);
+  const scaleX = availableWidth / pdfRuntime.baseViewport.width;
+  const scaleY = availableHeight / pdfRuntime.baseViewport.height;
+  setZoom(Math.min(scaleX, scaleY) * 100, null, VIEW_MODES.FIT_PAGE);
+  if (shouldSave) saveState();
 }
 
 function getPageSize() {
   return {
-    width: elements.pdfPage.offsetWidth || PAGE_BASE_WIDTH,
-    height: elements.pdfPage.offsetHeight || PAGE_BASE_HEIGHT,
+    width: elements.pdfPage.offsetWidth || pdfRuntime.cssViewport.width || FALLBACK_PAGE_WIDTH,
+    height: elements.pdfPage.offsetHeight || pdfRuntime.cssViewport.height || FALLBACK_PAGE_HEIGHT,
   };
 }
 
@@ -236,6 +366,7 @@ function pointerToPagePoint(clientX, clientY) {
     xRatio: clamp((clientX - rect.left) / rect.width, 0, 1),
     yRatio: clamp((clientY - rect.top) / rect.height, 0, 1),
     page: state.currentPage,
+    rotation: state.rotation,
   };
 }
 
@@ -252,6 +383,7 @@ function addRoutePoint(clientX, clientY) {
     page: point.page,
     xRatio: point.xRatio,
     yRatio: point.yRatio,
+    rotation: point.rotation,
   });
   route.confirmed = false;
   recalculateRoute(route);
@@ -269,6 +401,7 @@ function movePoint(pointId, clientX, clientY) {
   point.xRatio = next.xRatio;
   point.yRatio = next.yRatio;
   point.page = next.page;
+  point.rotation = next.rotation;
   route.confirmed = false;
   recalculateRoute(route);
   render();
@@ -309,9 +442,10 @@ function handleCalibrationClick(clientX, clientY) {
     return;
   }
 
-  const calibration = {
+  state.calibration = {
     id: uid("calibration"),
     page: clickedPoint.page,
+    rotation: state.rotation,
     startPoint: state.pendingCalibrationPoint,
     endPoint: clickedPoint,
     pixelDistance: 0,
@@ -319,7 +453,6 @@ function handleCalibrationClick(clientX, clientY) {
     mmPerPixel: 0,
   };
 
-  state.calibration = calibration;
   state.pendingCalibrationPoint = null;
   state.mode = MODES.ROUTE;
   updateCalibrationScale();
@@ -580,9 +713,14 @@ function renderRoutes() {
 
 function renderMeta() {
   const route = getActiveRoute();
+  const orientationLabel = pdfRuntime.orientation === "landscape" ? "横向き" : "縦向き";
+  const pageSizeLabel = `${Math.round(pdfRuntime.baseViewport.width)}x${Math.round(pdfRuntime.baseViewport.height)}`;
+
   elements.pointCount.textContent = route?.points.length || 0;
   elements.segmentCount.textContent = route?.segments.length || 0;
-  elements.routeState.textContent = route ? (route.confirmed ? "確定済み" : "編集中") : "未作成";
+  elements.routeState.textContent = route
+    ? `${route.confirmed ? "確定済み" : "編集中"} / ${orientationLabel} / ${pageSizeLabel} / 回転${state.rotation}°`
+    : `未作成 / ${orientationLabel} / ${pageSizeLabel} / 回転${state.rotation}°`;
 
   if (!state.calibration) {
     elements.calibrationStatus.textContent = state.pendingCalibrationPoint ? "終点を指定してください" : "未設定";
@@ -616,46 +754,53 @@ function saveState() {
   const data = {
     pdfName: state.pdfName,
     currentPage: state.currentPage,
+    pageCount: state.pageCount,
     zoom: state.zoom,
+    viewMode: state.viewMode,
+    rotation: state.rotation,
     mode: state.mode,
     calibration: state.calibration,
     routes: state.routes,
     activeRouteId: state.activeRouteId,
+    panelCollapsed: state.panelCollapsed,
   };
   localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
   elements.storageStatus.textContent = "ローカル保存: 保存済み";
 }
 
 function loadState() {
-  const raw = localStorage.getItem(STORAGE_KEY) || localStorage.getItem(LEGACY_STORAGE_KEY);
+  const raw = localStorage.getItem(STORAGE_KEY) || LEGACY_STORAGE_KEYS.map((key) => localStorage.getItem(key)).find(Boolean);
   if (!raw) return;
 
   try {
     const data = JSON.parse(raw);
     state.pdfName = data.pdfName || "";
     state.currentPage = data.currentPage || 1;
+    state.pageCount = data.pageCount || 0;
     state.zoom = data.zoom || 100;
+    state.viewMode = data.viewMode || VIEW_MODES.FIT_WIDTH;
+    state.rotation = normalizeRotation(data.rotation || 0);
     state.mode = Object.values(MODES).includes(data.mode) ? data.mode : MODES.ROUTE;
     state.calibration = normalizeCalibration(data.calibration);
     state.routes = Array.isArray(data.routes) ? data.routes.map(normalizeRoute) : [];
     state.activeRouteId = data.activeRouteId || state.routes[0]?.id || "";
+    state.panelCollapsed = Boolean(data.panelCollapsed);
     updateCalibrationScale();
     recalculateAllRoutes();
     const route = getActiveRoute();
     if (route) syncInputsFromRoute(route);
-    elements.storageStatus.textContent = "ローカル保存: 復元済み";
+    elements.storageStatus.textContent = "ローカル保存: 復元済み。PDFは再読み込みしてください";
   } catch {
     elements.storageStatus.textContent = "ローカル保存: 復元失敗";
   }
 }
 
 function normalizeRoute(route) {
-  const normalized = {
+  return {
     ...route,
     points: Array.isArray(route.points) ? route.points.map(normalizePoint) : [],
     segments: Array.isArray(route.segments) ? route.segments : [],
   };
-  return normalized;
 }
 
 function normalizePoint(point) {
@@ -664,6 +809,7 @@ function normalizePoint(point) {
     page: point.page || 1,
     xRatio: clamp(point.xRatio ?? point.x ?? 0, 0, 1),
     yRatio: clamp(point.yRatio ?? point.y ?? 0, 0, 1),
+    rotation: normalizeRotation(point.rotation || 0),
   };
 }
 
@@ -672,6 +818,7 @@ function normalizeCalibration(calibration) {
   return {
     id: calibration.id || uid("calibration"),
     page: calibration.page || calibration.startPoint.page || 1,
+    rotation: normalizeRotation(calibration.rotation || 0),
     startPoint: normalizePoint(calibration.startPoint),
     endPoint: normalizePoint(calibration.endPoint),
     pixelDistance: calibration.pixelDistance || 0,
@@ -712,34 +859,59 @@ function toCsvCell(value) {
   return text;
 }
 
-elements.pdfInput.addEventListener("change", (event) => {
+function normalizeRotation(rotation) {
+  return ((rotation % 360) + 360) % 360;
+}
+
+async function changePage(nextPage) {
+  if (!pdfRuntime.document) return;
+  await loadPdfPage(nextPage);
+  if (state.viewMode === VIEW_MODES.FIT_WIDTH) {
+    fitWidth(false);
+  } else if (state.viewMode === VIEW_MODES.FIT_PAGE) {
+    fitPage(false);
+  } else {
+    render();
+  }
+  saveState();
+}
+
+async function rotatePage(delta) {
+  state.rotation = normalizeRotation(state.rotation + delta);
+  updateBaseViewport();
+  if (state.viewMode === VIEW_MODES.FIT_WIDTH) {
+    fitWidth(false);
+  } else if (state.viewMode === VIEW_MODES.FIT_PAGE) {
+    fitPage(false);
+  } else {
+    render();
+  }
+  saveState();
+}
+
+elements.pdfInput.addEventListener("change", async (event) => {
   const file = event.target.files?.[0];
   if (!file) return;
-  if (state.pdfUrl) URL.revokeObjectURL(state.pdfUrl);
-  state.pdfUrl = URL.createObjectURL(file);
-  state.pdfName = file.name;
-  state.pdfFrameSrc = "";
-  state.currentPage = 1;
-  render();
-  saveState();
+  try {
+    elements.storageStatus.textContent = "PDF読み込み中";
+    await loadPdfFile(file);
+  } catch (error) {
+    console.error(error);
+    alert("PDFの読み込みに失敗しました。");
+    elements.storageStatus.textContent = "PDF読み込み失敗";
+  }
 });
 
 elements.prevPageBtn.addEventListener("click", () => {
-  state.currentPage = Math.max(1, state.currentPage - 1);
-  render();
-  saveState();
+  changePage(Math.max(1, state.currentPage - 1));
 });
 
 elements.nextPageBtn.addEventListener("click", () => {
-  state.currentPage += 1;
-  render();
-  saveState();
+  changePage(Math.min(state.pageCount || state.currentPage + 1, state.currentPage + 1));
 });
 
 elements.pageInput.addEventListener("change", () => {
-  state.currentPage = Math.max(1, Number(elements.pageInput.value) || 1);
-  render();
-  saveState();
+  changePage(Math.max(1, Number(elements.pageInput.value) || 1));
 });
 
 elements.zoomOutBtn.addEventListener("click", () => {
@@ -750,11 +922,38 @@ elements.zoomInBtn.addEventListener("click", () => {
   setZoom(state.zoom + 10);
 });
 
-elements.fitWidthBtn.addEventListener("click", fitWidth);
-elements.fitPageBtn.addEventListener("click", fitPage);
+elements.viewModeSelect.addEventListener("change", () => {
+  const value = elements.viewModeSelect.value;
+  if (value === VIEW_MODES.FIT_WIDTH) {
+    fitWidth();
+  } else if (value === VIEW_MODES.FIT_PAGE) {
+    fitPage();
+  } else {
+    setZoom(Number(value), null, VIEW_MODES.CUSTOM);
+  }
+});
+
+elements.fitWidthBtn.addEventListener("click", () => fitWidth());
+elements.fitPageBtn.addEventListener("click", () => fitPage());
+elements.rotateLeftBtn.addEventListener("click", () => rotatePage(-90));
+elements.rotateRightBtn.addEventListener("click", () => rotatePage(90));
 
 elements.modeSelect.addEventListener("change", () => {
   setMode(elements.modeSelect.value);
+});
+
+elements.togglePanelBtn.addEventListener("click", () => {
+  state.panelCollapsed = true;
+  render();
+  if (state.viewMode === VIEW_MODES.FIT_WIDTH) fitWidth(false);
+  saveState();
+});
+
+elements.openPanelBtn.addEventListener("click", () => {
+  state.panelCollapsed = false;
+  render();
+  if (state.viewMode === VIEW_MODES.FIT_WIDTH) fitWidth(false);
+  saveState();
 });
 
 elements.calibrationModeBtn.addEventListener("click", () => {
@@ -910,8 +1109,13 @@ elements.overlay.addEventListener("contextmenu", (event) => {
   deletePoint(pointId);
 });
 
-window.addEventListener("beforeunload", () => {
-  if (state.pdfUrl) URL.revokeObjectURL(state.pdfUrl);
+window.addEventListener("resize", () => {
+  if (!state.hasPdf) return;
+  if (state.viewMode === VIEW_MODES.FIT_WIDTH) {
+    fitWidth(false);
+  } else if (state.viewMode === VIEW_MODES.FIT_PAGE) {
+    fitPage(false);
+  }
 });
 
 loadState();
