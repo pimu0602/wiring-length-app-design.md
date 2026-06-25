@@ -109,16 +109,21 @@ function syncInputsFromRoute(route) {
 function updatePdfFrame() {
   if (!state.pdfUrl) {
     elements.pdfFrame.removeAttribute("src");
-    elements.emptyState.hidden = false;
+    setEmptyStateVisible(true);
     return;
   }
 
   const page = Math.max(1, Number(state.currentPage) || 1);
   const zoom = clamp(Number(state.zoom) || 100, 50, 200);
   elements.pdfFrame.src = `${state.pdfUrl}#page=${page}&zoom=${zoom}`;
-  elements.emptyState.hidden = true;
+  setEmptyStateVisible(false);
   elements.pageInput.value = page;
   elements.zoomLabel.textContent = `${zoom}%`;
+}
+
+function setEmptyStateVisible(isVisible) {
+  elements.emptyState.hidden = !isVisible;
+  elements.emptyState.setAttribute("aria-hidden", String(!isVisible));
 }
 
 function addPoint(clientX, clientY) {
