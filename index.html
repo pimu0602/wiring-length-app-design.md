@@ -33,12 +33,24 @@
           <button id="zoomOutBtn" type="button">縮小</button>
           <span id="zoomLabel">100%</span>
           <button id="zoomInBtn" type="button">拡大</button>
+          <button id="fitWidthBtn" type="button">幅に合わせる</button>
+          <button id="fitPageBtn" type="button">全体表示</button>
+          <label class="inline-field">
+            操作モード
+            <select id="modeSelect">
+              <option value="route">配線ルート作成</option>
+              <option value="calibration">基準寸法設定</option>
+              <option value="edit">選択・編集</option>
+            </select>
+          </label>
           <button id="deletePointBtn" type="button" disabled>選択点削除</button>
         </div>
 
         <div id="pdfStage" class="pdf-stage">
-          <iframe id="pdfFrame" title="読み込んだPDF図面"></iframe>
-          <svg id="routeOverlay" class="route-overlay" aria-label="配線ルート編集レイヤー"></svg>
+          <div id="pdfPage" class="pdf-page">
+            <iframe id="pdfFrame" title="読み込んだPDF図面"></iframe>
+            <svg id="routeOverlay" class="route-overlay" aria-label="配線ルート編集レイヤー"></svg>
+          </div>
           <div id="emptyState" class="empty-state">
             <strong>PDFを読み込んでください</strong>
             <span>読み込み後、新規ルートを作成して図面上をクリックすると点を追加できます。</span>
@@ -66,8 +78,28 @@
         <div class="button-grid">
           <button id="newRouteBtn" type="button">新規ルート</button>
           <button id="confirmRouteBtn" type="button">ルート確定</button>
+          <button id="calibrationModeBtn" type="button">基準寸法設定</button>
+          <button id="resetCalibrationBtn" type="button">基準寸法リセット</button>
           <button id="resetRouteBtn" type="button">ルートリセット</button>
           <button id="exportCsvBtn" type="button">CSV出力</button>
+        </div>
+
+        <div class="control-group">
+          <h2>基準寸法</h2>
+          <dl class="route-meta">
+            <div>
+              <dt>状態</dt>
+              <dd id="calibrationStatus">未設定</dd>
+            </div>
+            <div>
+              <dt>基準距離</dt>
+              <dd id="calibrationPixelDistance">-</dd>
+            </div>
+            <div>
+              <dt>換算値</dt>
+              <dd id="calibrationScale">-</dd>
+            </div>
+          </dl>
         </div>
 
         <div class="control-group">
